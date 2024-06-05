@@ -1,40 +1,87 @@
-import altair as alt
-import numpy as np
-import pandas as pd
 import streamlit as st
+from PIL import Image
+import io
+import zipfile
 
-"""
-# Welcome to Streamlit!
+def compress_image(input_image, output_format, quality=85):
+    """
+    Compress an image and return the compressed image.
+    Parameters:
+    - input_image (PIL.Image.Image): The input image.
+    - output_format (str): The format of the output image ('JPEG', 'JPG', 'PNG', or 'WEBP').
+    - quality (int, optional): The quality of the output image (1-100). Default is 85.
+    Returns:
+    - bytes: The compressed image in bytes.
+    """
+    img_byte_arr = io.BytesIO()
+    if output_format.upper() in ['JPEG', 'JPG']:
+        input_image.save(img_byte_arr, format='JPEG', quality=quality)
+    elif output_format.upper() == 'PNG':
+        input_image.save(img_byte_arr, format='PNG', compress_level=int((100-quality)/10))
+    elif output_format.upper() == 'WEBP':
+        input_image.save(img_byte_arr, format='WEBP', quality=quality)
+    img_byte_arr = img_byte_arr.getvalue()
+    return img_byte_arr
 
-Edit `/streamlit_app.py` to customize this app to your heart's desire :heart:.
-If you have any questions, checkout our [documentation](https://docs.streamlit.io) and [community
-forums](https://discuss.streamlit.io).
+def main():
+    st.title("Image Compression App")
 
-In the meantime, below is an example of what you can do with just a few lines of code:
-"""
+    uploaded_files = st.sidebar.file_uploader("Upload images", type=["jpg", "jpeg", "png", "webp"], accept_multiple_files=True)
 
-num_points = st.slider("Number of points in spiral", 1, 10000, 1100)
-num_turns = st.slider("Number of turns in spiral", 1, 300, 31)
+    if uploaded_files:
+        # Slider for compression quality affecting all images
+        global_quality = st.sidebar.slider("Select compression quality for all images", 1, 100, 85)
 
-indices = np.linspace(0, 1, num_points)
-theta = 2 * np.pi * num_turns * indices
-radius = indices
+        images = []
+        for idx, uploaded_file in enumerate(uploaded_files):
+            try:
+                # Display the uploaded image
+                image = Image.open(uploaded_file)
+                st.sidebar.image(image, caption=f"Uploaded Image: {uploaded_file.name}", use_column_width=True)
+                
+                # Get the size of the uploaded file
+                uploaded_file.seek(0, io.SEEK_END)
+                original_size = uploaded_file.tell()
+                uploaded_file.seek(0, io.SEEK_SET)
+                st.sidebar.write(f"{uploaded_file.name} - Original size: {original_size / 1024:.2f} KB")
 
-x = radius * np.cos(theta)
-y = radius * np.sin(theta)
+                # Determine the default format based on the original file
+                original_format = image.format if image and image.format else 'JPEG'
+                if original_format.upper() not in ['JPEG', 'JPG', 'PNG', 'WEBP']:
+                    original_format = 'JPEG'
+                output_format = st.sidebar.selectbox(f"Select output format for {uploaded_file.name}", 
+                                                     ['JPEG', 'JPG', 'PNG', 'WEBP'], 
+                                                     index=['JPEG', 'JPG', 'PNG', 'WEBP'].index(original_format.upper()),
+                                                     key=f"format_{uploaded_file.name}_{idx}")
 
-df = pd.DataFrame({
-    "x": x,
-    "y": y,
-    "idx": indices,
-    "rand": np.random.randn(num_points),
-})
+                # Convert image to RGB if it has an alpha channel and the output format is JPEG, JPG, or WEBP
+                if image and image.mode in ("RGBA", "P") and output_format.upper() in ['JPEG', 'JPG', 'WEBP']:
+                    image = image.convert("RGB")
 
-st.altair_chart(alt.Chart(df, height=700, width=700)
-    .mark_point(filled=True)
-    .encode(
-        x=alt.X("x", axis=None),
-        y=alt.Y("y", axis=None),
-        color=alt.Color("idx", legend=None, scale=alt.Scale()),
-        size=alt.Size("rand", legend=None, scale=alt.Scale(range=[1, 150])),
-    ))
+                # Compress the image and store in the list
+                compressed_image_bytes = compress_image(image, output_format, global_quality)
+                compressed_size = len(compressed_image_bytes)
+                st.sidebar.write(f"{uploaded_file.name} - Estimated compressed size: {compressed_size / 1024:.2f} KB")
+
+                images.append((uploaded_file.name, compressed_image_bytes, output_format))
+            except Exception as e:
+                st.error(f"An error occurred with file {uploaded_file.name}: {e}")
+
+        if st.button("Compress Images"):
+            # Create a ZIP file
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+                for filename, compressed_image_bytes, output_format in images:
+                    # Write the compressed image to the ZIP file with the original filename
+                    zip_file.writestr(filename, compressed_image_bytes)
+            
+            # Provide a download button for the ZIP file
+            st.download_button(
+                label="Download All Compressed Images",
+                data=zip_buffer.getvalue(),
+                file_name="compressed_images.zip",
+                mime="application/zip"
+            )
+
+if __name__ == "__main__":
+    main()
